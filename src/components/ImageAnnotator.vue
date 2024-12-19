@@ -1,5 +1,10 @@
 <template>
   <div class="image-annotator">
+    <div class="keyboard-shortcuts-hint">
+      <span>快捷键：</span>
+      <span>← 上一张图片</span>
+      <span>→ 下一张图片</span>
+    </div>
     <div class="sidebar">
       <div class="sidebar-section">
         <h3>标注类别管理</h3>
@@ -100,11 +105,21 @@
           <div v-if="!currentImage" class="placeholder">
             请上传图片开始标注
           </div>
-          <canvas ref="canvas" @mousedown="startDrawing"></canvas>
+          <canvas 
+            ref="canvas" 
+            @mousedown="startDrawing"
+            @click="handleCanvasClick"
+          ></canvas>
         </div>
 
         <div class="annotations-list">
-          <div v-for="(box, index) in currentBoxes" :key="index" class="annotation-item">
+          <div 
+            v-for="(box, index) in currentBoxes" 
+            :key="index" 
+            class="annotation-item"
+            :class="{ selected: selectedBoxIndex === index }"
+            @click="selectBox(index)"
+          >
             <span>{{ box.class }}</span>
             <button @click="deleteBox(index)" class="delete-btn">×</button>
           </div>
@@ -156,6 +171,10 @@ export default {
       images: [], // 存储所有图片信息
       currentImageIndex: -1, // 当前显示的图片索引
       annotations: {}, // 存储每张图片的标注信息 {imageIndex: boxes}
+      selectedBoxIndex: -1, // 当前选中的标注框索引
+      history: [], // 操作历史
+      historyIndex: -1, // 当前历史位置
+      isMac: /macintosh|mac os x/i.test(navigator.userAgent),
     }
   },
   computed: {
@@ -172,6 +191,12 @@ export default {
   },
   mounted() {
     this.initCanvas()
+    // 添加键盘事件监听
+    window.addEventListener('keydown', this.handleKeyDown)
+  },
+  beforeUnmount() {
+    // 移除键盘事件监听
+    window.removeEventListener('keydown', this.handleKeyDown)
   },
   methods: {
     async handleImageUpload(event) {
@@ -353,25 +378,34 @@ export default {
       document.removeEventListener('mouseup', this.endDrawing)
     },
     
-    drawBox(box) {
-      // 根据当前缩放比例调整框的位置和大小
+    drawBox(box, index) {
+      const color = this.getClassColor(box.class)
+      this.ctx.strokeStyle = color
+      this.ctx.lineWidth = index === this.selectedBoxIndex ? 3 : 2
+      
       const scaledBox = {
         x: box.x * this.scale,
         y: box.y * this.scale,
         width: box.width * this.scale,
-        height: box.height * this.scale,
-        class: box.class
+        height: box.height * this.scale
       }
       
-      const color = this.getClassColor(box.class)
-      this.ctx.strokeStyle = color
-      this.ctx.lineWidth = 2
       this.ctx.strokeRect(
         scaledBox.x,
         scaledBox.y,
         scaledBox.width,
         scaledBox.height
       )
+      
+      if (index === this.selectedBoxIndex) {
+        this.ctx.fillStyle = `${color}33`  // 添加20%透明度
+        this.ctx.fillRect(
+          scaledBox.x,
+          scaledBox.y,
+          scaledBox.width,
+          scaledBox.height
+        )
+      }
       
       // 绘制标签
       this.ctx.fillStyle = color
@@ -384,14 +418,19 @@ export default {
     },
     
     deleteBox(index) {
+      if (index === -1) return
+      
+      // 添加到历史记录
+      this.addHistory('delete')
+      
       const currentAnnotations = this.annotations[this.currentImageIndex.toString()]
       if (currentAnnotations) {
         currentAnnotations.splice(index, 1)
-        // 如果没有标注了，删除该图片的标注数组
         if (currentAnnotations.length === 0) {
           delete this.annotations[this.currentImageIndex.toString()]
         }
       }
+      this.selectedBoxIndex = -1
       this.redrawCanvas()
     },
     
@@ -406,7 +445,7 @@ export default {
           this.canvas.height
         )
       }
-      this.currentBoxes.forEach(box => this.drawBox(box))
+      this.currentBoxes.forEach((box, index) => this.drawBox(box, index))
     },
     
     convertToYoloFormat(box) {
@@ -588,6 +627,24 @@ export default {
       } while (usedColors.includes(newColor))
       
       return newColor
+    },
+    
+    handleKeyDown(event) {
+      // 如果正在输入，不处理快捷键
+      if (event.target.tagName === 'INPUT') return
+      
+      // 左右方向键切换图片
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        if (this.currentImageIndex > 0) {
+          this.switchImage(this.currentImageIndex - 1)
+        }
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        if (this.currentImageIndex < this.images.length - 1) {
+          this.switchImage(this.currentImageIndex + 1)
+        }
+      }
     },
   }
 }
@@ -870,5 +927,42 @@ export default {
   background-color: white;
   border-radius: 4px;
   border: 1px solid #ddd;
+}
+
+.keyboard-shortcuts-hint {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(0, 0, 0, 0.7);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  display: flex;
+  gap: 1rem;
+  z-index: 1000;
+}
+
+.keyboard-shortcuts-hint span {
+  white-space: nowrap;
+}
+
+.keyboard-shortcuts-hint span:not(:first-child) {
+  padding-left: 1rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.annotation-item.selected {
+  background-color: #e3f2fd;
+  border-left: 3px solid #1976d2;
+}
+
+.annotation-item:hover {
+  background-color: #f5f5f5;
+}
+
+.annotation-item.selected:hover {
+  background-color: #e3f2fd;
 }
 </style> 
