@@ -1,5 +1,56 @@
 <template>
   <div class="image-annotator">
+    <button class="help-button" @click="showHelp = true">
+      <span class="help-icon">?</span>
+    </button>
+    
+    <div class="help-modal" v-if="showHelp" @click.self="showHelp = false">
+      <div class="help-content">
+        <h2>标注工具使用说明</h2>
+        <div class="help-sections">
+          <section>
+            <h3>基本操作</h3>
+            <ul>
+              <li>点击"添加图片"上传一张或多张图片</li>
+              <li>使用左右方向键或点击缩略图切换图片</li>
+              <li>使用鼠标滚轮或缩放按钮调整图片大小</li>
+            </ul>
+          </section>
+          
+          <section>
+            <h3>标注步骤</h3>
+            <ol>
+              <li>在左侧添加需要标注的类别</li>
+              <li>从下拉菜单选择要标注的类别</li>
+              <li>点击"开始绘制"按钮</li>
+              <li>在图片上拖动鼠标绘制标注框</li>
+              <li>标注框会显示在下方列表中</li>
+            </ol>
+          </section>
+          
+          <section>
+            <h3>快捷键</h3>
+            <ul>
+              <li>← ：切换到上一张图片</li>
+              <li>→ ：切换到下一张图片</li>
+            </ul>
+          </section>
+          
+          <section>
+            <h3>数据导出</h3>
+            <ul>
+              <li>点击"导出标注"按钮</li>
+              <li>将生成包含以下文件的压缩包：</li>
+              <li>- classes.txt：类别名称列表</li>
+              <li>- *.txt：每张图片对应的标注文件</li>
+              <li>- *.jpg：原始图片文件</li>
+            </ul>
+          </section>
+        </div>
+        <button class="close-help" @click="showHelp = false">关闭</button>
+      </div>
+    </div>
+
     <div class="keyboard-shortcuts-hint">
       <span>快捷键：</span>
       <span>← 上一张图片</span>
@@ -73,11 +124,11 @@
             添加图片
           </button>
           <button 
-            @click="exportAnnotations" 
+            @click="showExportDialog = true" 
             class="export-btn"
             :disabled="!hasAnnotations"
           >
-            导出标注
+            导出数据集
           </button>
         </div>
         
@@ -123,6 +174,90 @@
             <span>{{ box.class }}</span>
             <button @click="deleteBox(index)" class="delete-btn">×</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 导出设置对话框 -->
+    <div class="export-modal" v-if="showExportDialog" @click.self="showExportDialog = false">
+      <div class="export-content">
+        <h2>导出设置</h2>
+        
+        <div class="export-section">
+          <h3>数据格式</h3>
+          <div class="format-options">
+            <label>
+              <input type="radio" v-model="exportFormat" value="yolo">
+              YOLO
+            </label>
+            <label>
+              <input type="radio" v-model="exportFormat" value="coco">
+              COCO
+            </label>
+            <label>
+              <input type="radio" v-model="exportFormat" value="voc">
+              VOC
+            </label>
+          </div>
+        </div>
+        
+        <div class="export-section">
+          <h3>导出内容</h3>
+          <div class="content-options">
+            <label>
+              <input type="checkbox" v-model="exportOptions.includeImages">
+              包含图片文件
+            </label>
+            <label>
+              <input type="checkbox" v-model="exportOptions.includeClasses">
+              包含类别文件
+            </label>
+          </div>
+        </div>
+        
+        <div class="export-section">
+          <h3>图片设置</h3>
+          <div class="image-options" v-if="exportOptions.includeImages">
+            <label>
+              <input type="checkbox" v-model="exportOptions.compressImages">
+              压缩图片
+            </label>
+            <div class="quality-slider" v-if="exportOptions.compressImages">
+              <span>质量：{{ exportOptions.imageQuality }}%</span>
+              <input 
+                type="range" 
+                v-model.number="exportOptions.imageQuality" 
+                min="10" 
+                max="100" 
+                step="10"
+              >
+            </div>
+          </div>
+        </div>
+        
+        <div class="export-section">
+          <h3>数据集划分</h3>
+          <div class="split-options">
+            <label>
+              <input type="checkbox" v-model="exportOptions.splitDataset">
+              划分训练/验证集
+            </label>
+            <div class="split-ratio" v-if="exportOptions.splitDataset">
+              <span>训练集比例：{{ exportOptions.trainRatio }}%</span>
+              <input 
+                type="range" 
+                v-model.number="exportOptions.trainRatio" 
+                min="50" 
+                max="90" 
+                step="10"
+              >
+            </div>
+          </div>
+        </div>
+        
+        <div class="button-group">
+          <button class="cancel-btn" @click="showExportDialog = false">取消</button>
+          <button class="confirm-btn" @click="handleExport">确认导出</button>
         </div>
       </div>
     </div>
@@ -175,6 +310,17 @@ export default {
       history: [], // 操作历史
       historyIndex: -1, // 当前历史位置
       isMac: /macintosh|mac os x/i.test(navigator.userAgent),
+      showHelp: false,
+      showExportDialog: false,
+      exportFormat: 'yolo',
+      exportOptions: {
+        includeImages: true,
+        includeClasses: true,
+        compressImages: false,
+        imageQuality: 80,
+        splitDataset: false,
+        trainRatio: 80
+      }
     }
   },
   computed: {
@@ -467,60 +613,111 @@ export default {
       }
     },
     
-    exportAnnotations() {
-      if (!this.hasAnnotations) return
-      
-      // 创建zip文件
+    async handleExport() {
+      this.showExportDialog = false
       const zip = new JSZip()
       
-      // 添加classes.txt
-      const classNames = Object.entries(this.classIds)
-        .sort((a, b) => a[1] - b[1])
-        .map(([name]) => name)
-        .join('\n')
-      zip.file('classes.txt', classNames)
-      
-      // 为每张图片添加标注和图片文件
-      this.images.forEach((image, index) => {
-        const boxes = this.annotations[index.toString()] || []
-        const fileName = image.name.replace(/\.[^/.]+$/, '')
-        
-        // 添加标注文件
-        if (boxes.length > 0) {
-          const annotations = boxes.map(box => {
-            const yolo = this.convertToYoloFormat(box)
-            return `${yolo.classId} ${yolo.centerX.toFixed(6)} ${yolo.centerY.toFixed(6)} ${yolo.width.toFixed(6)} ${yolo.height.toFixed(6)}`
-          }).join('\n')
-          zip.file(`${fileName}.txt`, annotations)
+      // 添加类别文件
+      if (this.exportOptions.includeClasses) {
+        if (this.exportFormat === 'yolo') {
+          const sortedClasses = Object.entries(this.classIds)
+            .sort((a, b) => a[1] - b[1])
+            .map(([name]) => name)
+          zip.file('classes.txt', sortedClasses.join('\n'))
         }
-        
-        // 添加图片文件
-        zip.file(`${fileName}.jpg`, this.dataURLtoBlob(image.url))
-      })
+      }
       
-      // 下载zip文件
-      zip.generateAsync({type: 'blob'}).then(content => {
+      // 准备数据集
+      let images = [...this.images]
+      if (this.exportOptions.splitDataset) {
+        images = this.shuffleArray(images)
+        const trainCount = Math.floor(images.length * this.exportOptions.trainRatio / 100)
+        
+        const trainDir = zip.folder('train')
+        const valDir = zip.folder('val')
+        
+        await this.processDataset(images.slice(0, trainCount), trainDir)
+        await this.processDataset(images.slice(trainCount), valDir)
+      } else {
+        await this.processDataset(images, zip)
+      }
+      
+      try {
+        const content = await zip.generateAsync({ type: 'blob' })
         const url = URL.createObjectURL(content)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = 'dataset.zip'
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = 'dataset.zip'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
         URL.revokeObjectURL(url)
-      })
+      } catch (error) {
+        console.error('Export failed:', error)
+        alert('导出失败，请重试')
+      }
     },
     
-    dataURLtoBlob(dataurl) {
-      const arr = dataurl.split(',')
-      const mime = arr[0].match(/:(.*?);/)[1]
-      const bstr = atob(arr[1])
-      let n = bstr.length
-      const u8arr = new Uint8Array(n)
-      while(n--) {
-        u8arr[n] = bstr.charCodeAt(n)
+    async processDataset(images, zipFolder) {
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i]
+        const annotations = this.annotations[i.toString()] || []
+        
+        // 添加图片
+        if (this.exportOptions.includeImages) {
+          if (this.exportOptions.compressImages) {
+            const compressedImage = await this.compressImage(
+              img.file, 
+              this.exportOptions.imageQuality
+            )
+            zipFolder.file(img.name, compressedImage)
+          } else {
+            zipFolder.file(img.name, img.file)
+          }
+        }
+        
+        // 根据不同格式生成标注文件
+        if (this.exportFormat === 'yolo') {
+          const txtFileName = img.name.replace(/\.[^/.]+$/, '.txt')
+          zipFolder.file(txtFileName, this.generateYOLOAnnotations(annotations, img))
+        } else if (this.exportFormat === 'voc') {
+          const xmlFileName = img.name.replace(/\.[^/.]+$/, '.xml')
+          zipFolder.file(xmlFileName, this.generateVOCAnnotation(img, annotations))
+        }
       }
-      return new Blob([u8arr], {type: mime})
+      
+      // COCO格式需要生成单个json文件
+      if (this.exportFormat === 'coco') {
+        zipFolder.file('annotations.json', this.generateCOCOAnnotations())
+      }
+    },
+    
+    shuffleArray(array) {
+      const newArray = [...array]
+      for (let i = newArray.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [newArray[i], newArray[j]] = [newArray[j], newArray[i]]
+      }
+      return newArray
+    },
+    
+    async compressImage(file, quality) {
+      return new Promise((resolve) => {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement('canvas')
+          canvas.width = img.width
+          canvas.height = img.height
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(img, 0, 0)
+          canvas.toBlob(
+            (blob) => resolve(blob),
+            'image/jpeg',
+            quality / 100
+          )
+        }
+        img.src = URL.createObjectURL(file)
+      })
     },
     
     addClass() {
@@ -645,6 +842,108 @@ export default {
           this.switchImage(this.currentImageIndex + 1)
         }
       }
+    },
+    
+    generateYOLOAnnotations(annotations, image) {
+      return annotations.map(box => {
+        const classId = this.classIds[box.class]
+        // 计算归一化的中心点坐标和宽高
+        const centerX = (box.x + box.width / 2) / this.originalWidth
+        const centerY = (box.y + box.height / 2) / this.originalHeight
+        const width = box.width / this.originalWidth
+        const height = box.height / this.originalHeight
+        return `${classId} ${centerX.toFixed(6)} ${centerY.toFixed(6)} ${width.toFixed(6)} ${height.toFixed(6)}`
+      }).join('\n')
+    },
+    
+    generateCOCOAnnotations() {
+      const coco = {
+        info: {
+          year: new Date().getFullYear(),
+          version: '1.0',
+          description: 'Exported from YOLO Annotator',
+          date_created: new Date().toISOString()
+        },
+        images: [],
+        annotations: [],
+        categories: []
+      }
+      
+      // 添加类别信息
+      Object.entries(this.classIds).forEach(([name, id]) => {
+        coco.categories.push({
+          id: id + 1, // COCO的类别ID从1开始
+          name: name,
+          supercategory: 'object'
+        })
+      })
+      
+      let annotationId = 1
+      
+      // 添加图片和标注信息
+      this.images.forEach((img, imageId) => {
+        coco.images.push({
+          id: imageId + 1,
+          file_name: img.name,
+          width: this.originalWidth,
+          height: this.originalHeight
+        })
+        
+        const annotations = this.annotations[imageId.toString()] || []
+        annotations.forEach(box => {
+          coco.annotations.push({
+            id: annotationId++,
+            image_id: imageId + 1,
+            category_id: this.classIds[box.class] + 1,
+            bbox: [
+              box.x,
+              box.y,
+              box.width,
+              box.height
+            ],
+            area: box.width * box.height,
+            segmentation: [],
+            iscrowd: 0
+          })
+        })
+      })
+      
+      return JSON.stringify(coco, null, 2)
+    },
+    
+    generateVOCAnnotation(imageInfo, annotations) {
+      const xml = []
+      xml.push('<?xml version="1.0" encoding="UTF-8"?>')
+      xml.push('<annotation>')
+      xml.push('  <folder>images</folder>')
+      xml.push(`  <filename>${imageInfo.name}</filename>`)
+      xml.push('  <source>')
+      xml.push('    <database>Unknown</database>')
+      xml.push('  </source>')
+      xml.push('  <size>')
+      xml.push(`    <width>${this.originalWidth}</width>`)
+      xml.push(`    <height>${this.originalHeight}</height>`)
+      xml.push('    <depth>3</depth>')
+      xml.push('  </size>')
+      xml.push('  <segmented>0</segmented>')
+      
+      annotations.forEach(box => {
+        xml.push('  <object>')
+        xml.push(`    <name>${box.class}</name>`)
+        xml.push('    <pose>Unspecified</pose>')
+        xml.push('    <truncated>0</truncated>')
+        xml.push('    <difficult>0</difficult>')
+        xml.push('    <bndbox>')
+        xml.push(`      <xmin>${Math.round(box.x)}</xmin>`)
+        xml.push(`      <ymin>${Math.round(box.y)}</ymin>`)
+        xml.push(`      <xmax>${Math.round(box.x + box.width)}</xmax>`)
+        xml.push(`      <ymax>${Math.round(box.y + box.height)}</ymax>`)
+        xml.push('    </bndbox>')
+        xml.push('  </object>')
+      })
+      
+      xml.push('</annotation>')
+      return xml.join('\n')
     },
   }
 }
@@ -964,5 +1263,203 @@ export default {
 
 .annotation-item.selected:hover {
   background-color: #e3f2fd;
+}
+
+.help-button {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  z-index: 1000;
+  transition: all 0.3s ease;
+}
+
+.help-button:hover {
+  background-color: #45a049;
+  transform: scale(1.1);
+}
+
+.help-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1001;
+}
+
+.help-content {
+  background-color: white;
+  border-radius: 8px;
+  padding: 2rem;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.help-content h2 {
+  margin: 0 0 1.5rem;
+  color: #1a1a1a;
+  font-size: 1.5rem;
+  text-align: center;
+}
+
+.help-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.help-sections section {
+  background-color: #f8f9fa;
+  padding: 1rem;
+  border-radius: 6px;
+  border: 1px solid #e8e8e8;
+}
+
+.help-sections h3 {
+  color: #2c3e50;
+  margin: 0 0 0.8rem;
+  font-size: 1.1rem;
+}
+
+.help-sections ul,
+.help-sections ol {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.help-sections li {
+  margin: 0.5rem 0;
+  color: #4a4a4a;
+  line-height: 1.4;
+}
+
+.close-help {
+  display: block;
+  margin: 1.5rem auto 0;
+  padding: 0.5rem 2rem;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+}
+
+.close-help:hover {
+  background-color: #45a049;
+  transform: translateY(-1px);
+}
+
+.export-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1001;
+}
+
+.export-content {
+  background-color: white;
+  border-radius: 8px;
+  padding: 2rem;
+  width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+.export-section {
+  margin-bottom: 1.5rem;
+}
+
+.export-section h3 {
+  color: #2c3e50;
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+}
+
+.format-options,
+.content-options,
+.image-options,
+.split-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.quality-slider,
+.split-ratio {
+  margin-left: 1.5rem;
+  margin-top: 0.5rem;
+}
+
+.button-group {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.cancel-btn,
+.confirm-btn {
+  padding: 0.5rem 2rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+}
+
+.cancel-btn {
+  background-color: #f8f9fa;
+  border: 1px solid #ddd;
+  color: #666;
+}
+
+.confirm-btn {
+  background-color: #4CAF50;
+  border: none;
+  color: white;
+}
+
+.cancel-btn:hover {
+  background-color: #e9ecef;
+}
+
+.confirm-btn:hover {
+  background-color: #45a049;
+}
+
+.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.disabled input {
+  cursor: not-allowed;
 }
 </style> 
